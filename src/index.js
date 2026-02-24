@@ -73,15 +73,20 @@ export default {
       forwardHeaders.set('User-Agent', 'git/2.39.0');
     }
 
+    // 预读 body 为 ArrayBuffer，支持重定向跟随和 401 重试时复用
+    let requestBody = null;
+    if (['POST', 'PUT', 'PATCH'].includes(request.method) && request.body) {
+      requestBody = await request.arrayBuffer();
+    }
+
     const fetchInit = {
       method: request.method,
       headers: forwardHeaders,
       redirect: 'manual',
     };
 
-    // POST 请求转发 body
-    if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
-      fetchInit.body = request.body;
+    if (requestBody) {
+      fetchInit.body = requestBody;
     }
 
     try {
@@ -97,8 +102,8 @@ export default {
           headers: forwardHeaders,
           redirect: 'manual',
         };
-        if (['POST', 'PUT', 'PATCH'].includes(request.method)) {
-          retryInit.body = request.body;
+        if (requestBody) {
+          retryInit.body = requestBody;
         }
         response = await fetchWithRedirects(targetUrl, retryInit, url.origin);
       }
