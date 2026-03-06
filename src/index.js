@@ -14,6 +14,11 @@ const ALLOWED_HOSTS = new Set([
 // 需要代理重定向（而非让客户端跳转）的路径模式
 const CLONE_PATH_REGEX = /\.(git)(\/|$)/;
 
+// push 相关请求（需要用户自己的凭据，不能用服务端 Token 替代）
+function isPushRequest(url, method) {
+  return url.includes('git-receive-pack');
+}
+
 export default {
   async fetch(request, env) {
     // 处理 CORS 预检
@@ -89,12 +94,19 @@ export default {
       fetchInit.body = requestBody;
     }
 
+    const isPush = isPushRequest(targetUrl, request.method);
+
+    // push 必须认证，直接带上 Token，省掉一次无意义的匿名往返
+    if (isPush && env.GITHUB_TOKEN && !forwardHeaders.has('Authorization')) {
+      const basicAuth = btoa(`x-access-token:${env.GITHUB_TOKEN}`);
+      forwardHeaders.set('Authorization', `Basic ${basicAuth}`);
+    }
+
     try {
-      // 第一次：匿名请求（不带 Token）
       let response = await fetchWithRedirects(targetUrl, fetchInit, url.origin);
 
-      // 如果返回 401 且配置了 Token，带上 Token 重试
-      if (response.status === 401 && env.GITHUB_TOKEN) {
+      // 读操作（clone/fetch/pull）：匿名失败后用服务端 Token 重试
+      if (response.status === 401 && !isPush && env.GITHUB_TOKEN) {
         const basicAuth = btoa(`x-access-token:${env.GITHUB_TOKEN}`);
         forwardHeaders.set('Authorization', `Basic ${basicAuth}`);
         const retryInit = {
@@ -108,7 +120,6 @@ export default {
         response = await fetchWithRedirects(targetUrl, retryInit, url.origin);
       }
 
-      // 构建返回头
       const responseHeaders = new Headers(response.headers);
       responseHeaders.set('Access-Control-Allow-Origin', '*');
       responseHeaders.set('Access-Control-Expose-Headers', '*');
